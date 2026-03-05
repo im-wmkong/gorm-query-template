@@ -3,7 +3,10 @@ package test
 import (
 	"context"
 	"fmt"
+	"log"
+	"os"
 	"testing"
+	"time"
 
 	"gorm-query-template/internal/model"
 	"gorm-query-template/internal/repository"
@@ -24,8 +27,17 @@ func setupTest(t *testing.T) (context.Context, service.UserService) {
 	// 使用 file::memory:?cache=shared 模式或者随机文件名确保隔离
 	// 修正：使用随机数据库名称避免缓存冲突
 	dbName := fmt.Sprintf("file:memdb_%s?mode=memory&cache=shared", t.Name())
+	newLogger := logger.New(
+		log.New(os.Stdout, "\r\n", log.LstdFlags), // io writer
+		logger.Config{
+			SlowThreshold:             time.Second,  // Slow SQL threshold
+			LogLevel:                  logger.Error, // Log level
+			IgnoreRecordNotFoundError: true,         // Ignore ErrRecordNotFound error for logger
+			Colorful:                  false,        // Disable color
+		},
+	)
 	db, err := gorm.Open(sqlite.Open(dbName), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Error), // 减少日志噪音
+		Logger: newLogger, // 减少日志噪音
 	})
 	require.NoError(t, err, "failed to connect database")
 
@@ -149,7 +161,6 @@ func TestTypeSafeColumnUsage(t *testing.T) {
 	ctx, svc := setupTest(t)
 
 	q := query.New().Where(model.UserProps.Email.Eq("alice@example.com"))
-	fmt.Println("Query built using:", model.UserProps.Email)
 
 	alice, err := svc.First(ctx, q)
 	require.NoError(t, err)
@@ -361,7 +372,7 @@ func TestCreateUser(t *testing.T) {
 	// 2. 创建重复用户 - 应该失败
 	duplicateUser := &model.User{
 		UserName: "Eve",
-		Email:    "eve.duplicate@example.com",
+		Email:    "eve@example.com",
 		Age:      22,
 		Status:   1,
 	}
