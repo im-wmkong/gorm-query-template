@@ -19,12 +19,12 @@ type Repository[T any] interface {
 	Transaction(ctx context.Context, fn func(ctx context.Context) error) error
 	Create(ctx context.Context, entity *T) error
 	Save(ctx context.Context, entity *T) error
-	Update(ctx context.Context, q *query.Builder, column string, value interface{}) error
-	Updates(ctx context.Context, q *query.Builder, values interface{}) error
-	Delete(ctx context.Context, q *query.Builder) error
-	Find(ctx context.Context, q *query.Builder) ([]*T, error)
-	First(ctx context.Context, q *query.Builder) (*T, error)
-	Count(ctx context.Context, q *query.Builder) (int64, error)
+	Update(ctx context.Context, qb *query.Builder, column string, value interface{}) error
+	Updates(ctx context.Context, qb *query.Builder, values interface{}) error
+	Delete(ctx context.Context, qb *query.Builder) error
+	Find(ctx context.Context, qb *query.Builder) ([]*T, error)
+	First(ctx context.Context, qb *query.Builder) (*T, error)
+	Count(ctx context.Context, qb *query.Builder) (int64, error)
 }
 
 var _ Repository[any] = (*BaseRepository[any])(nil)
@@ -50,7 +50,7 @@ func (r *BaseRepository[T]) DB(ctx context.Context) *gorm.DB {
 }
 
 func (r *BaseRepository[T]) Transaction(ctx context.Context, fn func(ctx context.Context) error) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return r.DB(ctx).Transaction(func(tx *gorm.DB) error {
 		ctx = context.WithValue(ctx, txKey, tx)
 		return fn(ctx)
 	})
