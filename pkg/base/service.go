@@ -13,8 +13,8 @@ type Service[T any] interface {
 	Count(ctx context.Context, qb *query.Builder) (int64, error)
 	Create(ctx context.Context, entity *T) error
 	Save(ctx context.Context, entity *T) error
-	Update(ctx context.Context, column string, value interface{}) error
-	Updates(ctx context.Context, values interface{}) error
+	Update(ctx context.Context, qb *query.Builder, column string, value interface{}) error
+	Updates(ctx context.Context, qb *query.Builder, values interface{}) error
 	Delete(ctx context.Context, qb *query.Builder) error
 }
 
@@ -50,12 +50,12 @@ func (s *BaseService[T]) Save(ctx context.Context, entity *T) error {
 	return s.Repo.Save(ctx, entity)
 }
 
-func (s *BaseService[T]) Update(ctx context.Context, column string, value interface{}) error {
-	return s.Repo.Update(ctx, column, value)
+func (s *BaseService[T]) Update(ctx context.Context, qb *query.Builder, column string, value interface{}) error {
+	return s.Repo.Update(ctx, qb, column, value)
 }
 
-func (s *BaseService[T]) Updates(ctx context.Context, values interface{}) error {
-	return s.Repo.Updates(ctx, values)
+func (s *BaseService[T]) Updates(ctx context.Context, qb *query.Builder, values interface{}) error {
+	return s.Repo.Updates(ctx, qb, values)
 }
 
 func (s *BaseService[T]) Delete(ctx context.Context, qb *query.Builder) error {

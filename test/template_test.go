@@ -380,3 +380,408 @@ func TestCreateUser(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, service.ErrUserAlreadyExists, err)
 }
+
+// 15. 测试查询功能 - Neq (Not Equal)
+func TestQuery_Neq(t *testing.T) {
+	ctx, svc := setupTest(t)
+
+	// 获取不是 Alice 的用户
+	qNeq := query.New().Where(model.UserProps.UserName.Neq("Alice"))
+	usersNeq, err := svc.Find(ctx, qNeq)
+	require.NoError(t, err)
+	// Alice, Bob, Charlie, David, admin -> 5 users
+	// Expect 4
+	require.Len(t, usersNeq, 4)
+
+	for _, u := range usersNeq {
+		assert.NotEqual(t, "Alice", u.UserName)
+	}
+
+	// Test Column comparison: Age <> Age -> False for all (should return 0 results if Age is not null)
+	// But Age is not null. So WHERE Age <> Age matches nothing.
+	qCol := query.New().Where(model.UserProps.Age.Neq(model.UserProps.Age))
+	usersCol, err := svc.Find(ctx, qCol)
+	require.NoError(t, err)
+	require.Empty(t, usersCol)
+}
+
+// 16. 测试查询功能 - Gt, Gte, Lt, Lte
+func TestQuery_Comparison(t *testing.T) {
+	ctx, svc := setupTest(t)
+
+	// Gt: Age > 30 (Charlie 35, admin 40)
+	qGt := query.New().Where(model.UserProps.Age.Gt(30))
+	usersGt, err := svc.Find(ctx, qGt)
+	require.NoError(t, err)
+	require.Len(t, usersGt, 2)
+
+	// Gte: Age >= 30 (Bob 30, Charlie 35, admin 40)
+	qGte := query.New().Where(model.UserProps.Age.Gte(30))
+	usersGte, err := svc.Find(ctx, qGte)
+	require.NoError(t, err)
+	require.Len(t, usersGte, 3)
+
+	// Lt: Age < 25 (David 20)
+	qLt := query.New().Where(model.UserProps.Age.Lt(25))
+	usersLt, err := svc.Find(ctx, qLt)
+	require.NoError(t, err)
+	require.Len(t, usersLt, 1)
+	assert.Equal(t, "David", usersLt[0].UserName)
+
+	// Lte: Age <= 25 (Alice 25, David 20)
+	qLte := query.New().Where(model.UserProps.Age.Lte(25))
+	usersLte, err := svc.Find(ctx, qLte)
+	require.NoError(t, err)
+	require.Len(t, usersLte, 2)
+
+	// Column comparison
+	// Age < Age -> False
+	qLtCol := query.New().Where(model.UserProps.Age.Lt(model.UserProps.Age))
+	usersLtCol, err := svc.Find(ctx, qLtCol)
+	require.NoError(t, err)
+	require.Empty(t, usersLtCol)
+	
+	// Age <= Age -> True (All)
+	qLteCol := query.New().Where(model.UserProps.Age.Lte(model.UserProps.Age))
+	usersLteCol, err := svc.Find(ctx, qLteCol)
+	require.NoError(t, err)
+	require.Len(t, usersLteCol, 5)
+
+	// Age > Age -> False
+	qGtCol := query.New().Where(model.UserProps.Age.Gt(model.UserProps.Age))
+	usersGtCol, err := svc.Find(ctx, qGtCol)
+	require.NoError(t, err)
+	require.Empty(t, usersGtCol)
+
+	// Age >= Age -> True (All)
+	qGteCol := query.New().Where(model.UserProps.Age.Gte(model.UserProps.Age))
+	usersGteCol, err := svc.Find(ctx, qGteCol)
+	require.NoError(t, err)
+	require.Len(t, usersGteCol, 5)
+}
+
+// 17. 测试查询功能 - In, NotIn
+func TestQuery_In_NotIn(t *testing.T) {
+	ctx, svc := setupTest(t)
+
+	// In: Alice, Bob
+	names := []string{"Alice", "Bob"}
+	qIn := query.New().Where(model.UserProps.UserName.In(names))
+	usersIn, err := svc.Find(ctx, qIn)
+	require.NoError(t, err)
+	require.Len(t, usersIn, 2)
+
+	// NotIn: Alice, Bob -> Charlie, David, admin
+	qNotIn := query.New().Where(model.UserProps.UserName.NotIn(names))
+	usersNotIn, err := svc.Find(ctx, qNotIn)
+	require.NoError(t, err)
+	require.Len(t, usersNotIn, 3)
+}
+
+// 18. 测试查询功能 - IsNull, IsNotNull
+func TestQuery_Null_NotNull(t *testing.T) {
+	ctx, svc := setupTest(t)
+
+	// Create a user with NULL Email (Assuming Email can be null, let's check model)
+	// model.User struct has string for Email, usually empty string in Go is not NULL in DB unless pointer.
+	// Looking at model/user.go: Email string `gorm:"uniqueIndex;size:128"`
+	// It's a string, not *string, so it will be empty string "", not NULL.
+	// But let's check if we can insert a NULL using map or raw SQL if we want to test IsNull.
+	// Or we can test on DeletedAt which is gorm.DeletedAt (Time pointer wrapper).
+	
+	// For this test, let's use DeletedAt field which is nullable.
+	
+	// Default users are not deleted, so DeletedAt IS NULL
+	qIsNull := query.New().Where(model.UserProps.DeletedAt.IsNull())
+	usersIsNull, err := svc.Find(ctx, qIsNull)
+	require.NoError(t, err)
+	require.Len(t, usersIsNull, 5)
+
+	// Soft delete Alice
+	alice, _ := svc.First(ctx, query.New().Where(model.UserProps.UserName.Eq("Alice")))
+	svc.Delete(ctx, query.New().Where(model.UserProps.ID.Eq(alice.ID)))
+
+	// Now query Unscoped to find deleted user
+	qIsNotNull := query.New().
+		Unscoped().
+		Where(model.UserProps.DeletedAt.IsNotNull())
+	
+	usersIsNotNull, err := svc.Find(ctx, qIsNotNull)
+	require.NoError(t, err)
+	require.Len(t, usersIsNotNull, 1)
+	assert.Equal(t, "Alice", usersIsNotNull[0].UserName)
+}
+
+// 19. 测试查询功能 - Or
+func TestQuery_Or(t *testing.T) {
+	ctx, svc := setupTest(t)
+
+	// Name = Alice OR Name = Bob
+	// 使用 Or 方法
+	qOr := query.New().Where(
+		model.UserProps.UserName.Eq("Alice"),
+	).Or(
+		model.UserProps.UserName.Eq("Bob"),
+	)
+	
+	usersOr, err := svc.Find(ctx, qOr)
+	require.NoError(t, err)
+	// Alice, Bob
+	require.Len(t, usersOr, 2)
+}
+
+// 20. 测试查询功能 - Group & Having
+func TestQuery_Group_Having(t *testing.T) {
+	// 准备数据: 添加另一个 Age=25 的用户，以便分组测试
+	ctx, svc := setupTest(t)
+	svc.Create(ctx, &model.User{
+		UserName: "Frank",
+		Email:    "frank@example.com",
+		Age:      25,
+		Status:   1,
+	})
+
+	// Group by Age, Having Count(*) > 1
+	// 应该找到 Age=25 (Alice, Frank)
+	
+	qGroup := query.New().
+		Select(model.UserProps.Age).
+		Group(model.UserProps.Age).
+		Having("count(*) > ?", 1)
+	
+	// 注意: Find 的结果将只有 Age 字段被填充
+	usersGroup, err := svc.Find(ctx, qGroup)
+	require.NoError(t, err)
+	
+	require.Len(t, usersGroup, 1)
+	assert.Equal(t, 25, usersGroup[0].Age)
+}
+
+// ... existing tests ...
+
+// 26. 测试 Update
+func TestUpdate(t *testing.T) {
+	ctx, svc := setupTest(t)
+	
+	// 更新 Alice 的 Age 为 26
+	q := query.New().Where(model.UserProps.UserName.Eq("Alice"))
+	err := svc.Update(ctx, q, "age", 26)
+	require.NoError(t, err)
+	
+	// 验证
+	alice, err := svc.First(ctx, q)
+	require.NoError(t, err)
+	assert.Equal(t, 26, alice.Age)
+}
+
+// 27. 测试 Updates
+func TestUpdates(t *testing.T) {
+	ctx, svc := setupTest(t)
+	
+	// 更新 Bob 的 Age 和 Status
+	q := query.New().Where(model.UserProps.UserName.Eq("Bob"))
+	updates := map[string]interface{}{
+		"age":    31,
+		"status": 2,
+	}
+	err := svc.Updates(ctx, q, updates)
+	require.NoError(t, err)
+	
+	// 验证
+	bob, err := svc.First(ctx, q)
+	require.NoError(t, err)
+	assert.Equal(t, 31, bob.Age)
+	assert.Equal(t, 2, bob.Status)
+}
+
+// 28. 测试 Save
+func TestSave(t *testing.T) {
+	ctx, svc := setupTest(t)
+	
+	// 获取 Charlie
+	q := query.New().Where(model.UserProps.UserName.Eq("Charlie"))
+	charlie, err := svc.First(ctx, q)
+	require.NoError(t, err)
+	
+	// 修改
+	charlie.Age = 36
+	charlie.Status = 0
+	
+	// 保存
+	err = svc.Save(ctx, charlie)
+	require.NoError(t, err)
+	
+	// 验证
+	charlieNew, err := svc.First(ctx, q)
+	require.NoError(t, err)
+	assert.Equal(t, 36, charlieNew.Age)
+	assert.Equal(t, 0, charlieNew.Status)
+}
+
+// 29. 测试 Joins
+func TestJoins(t *testing.T) {
+	ctx, svc := setupTest(t)
+	// 虽然没有关联表，但我们可以测试生成的 SQL 不报错，或者测试 self-join 语法
+	// SELECT users.* FROM users JOIN users as u2 ON users.id = u2.id
+	
+	// 使用 func(db *gorm.DB) *gorm.DB 作为 Where 参数
+	q := query.New().Joins("JOIN users as u2 ON users.id = u2.id").Where(func(db *gorm.DB) *gorm.DB {
+		return db.Where("u2.user_name = ?", "Alice")
+	})
+	users, err := svc.Find(ctx, q)
+	require.NoError(t, err)
+	require.Len(t, users, 1)
+	assert.Equal(t, "Alice", users[0].UserName)
+}
+
+// 30. 测试 Group 字符串参数
+func TestGroupString(t *testing.T) {
+	ctx, svc := setupTest(t)
+	
+	// Group("age") instead of Column
+	q := query.New().Select("age").Group("age").Having("count(*) > ?", 0)
+	users, err := svc.Find(ctx, q)
+	require.NoError(t, err)
+	// Should have distinct ages: 20, 25, 30, 35, 40
+	require.Len(t, users, 5)
+}
+
+// 31. 测试 Coverage 补充用例
+func TestCoverageSupplement(t *testing.T) {
+	ctx, svc := setupTest(t)
+
+	// 1. Select String
+	qSelect := query.New().Select("user_name").Where(model.UserProps.UserName.Eq("Alice"))
+	uSelect, err := svc.First(ctx, qSelect)
+	require.NoError(t, err)
+	assert.Equal(t, "Alice", uSelect.UserName)
+
+	// 2. Omit String
+	qOmit := query.New().Omit("email").Where(model.UserProps.UserName.Eq("Alice"))
+	uOmit, err := svc.First(ctx, qOmit)
+	require.NoError(t, err)
+	assert.Empty(t, uOmit.Email)
+
+	// 3. Order Invalid Type (should be ignored)
+	qOrder := query.New().Order(123).Where(model.UserProps.UserName.Eq("Alice"))
+	uOrder, err := svc.First(ctx, qOrder)
+	require.NoError(t, err)
+	assert.Equal(t, "Alice", uOrder.UserName)
+
+	// 4. Eq(Column)
+	// UserName = UserName -> All
+	qEqCol := query.New().Where(model.UserProps.UserName.Eq(model.UserProps.UserName))
+	usersEqCol, err := svc.Find(ctx, qEqCol)
+	require.NoError(t, err)
+	require.Len(t, usersEqCol, 5)
+
+	// 5. NotLike(Column)
+	// UserName NOT LIKE UserName -> None
+	qNotLikeCol := query.New().Where(model.UserProps.UserName.NotLike(model.UserProps.UserName))
+	usersNotLikeCol, err := svc.Find(ctx, qNotLikeCol)
+	require.NoError(t, err)
+	require.Len(t, usersNotLikeCol, 0)
+}
+
+// 21. 测试查询功能 - Joins (简单测试，因为 User 表没有外键关联，我们自连接或者不做复杂关联)
+// 由于没有其他表，我们无法真正测试 JOIN 其他表。但我们可以测试语法是否报错。
+// 或者我们可以 Mock 一个关联查询 (Preload 同理)
+// 我们可以通过 Preload 测试 Preload 方法
+func TestQuery_Preload(t *testing.T) {
+	ctx, svc := setupTest(t)
+	
+	// User 模型目前没有定义关联关系。
+	// 我们仅仅调用一下 Preload 看看是否 panic，或者 SQL 是否生成 (虽然没有任何效果)
+	// 或者我们可以假装有一个关联 "Profile"
+	
+	// 这是一个简单的 smoke test，确保代码路径被覆盖
+	qPreload := query.New().Preload("Orders") // 假设有 Orders
+	// 这会报错: model.User' does not have relation 'Orders'
+	// 所以我们应该期望错误
+	
+	_, err := svc.Find(ctx, qPreload)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Orders")
+}
+
+// 22. 测试查询功能 - Limit & Offset & Page
+func TestQuery_Limit_Offset(t *testing.T) {
+	ctx, svc := setupTest(t)
+	
+	// Limit 2
+	qLimit := query.New().Limit(2).Order(model.UserProps.ID)
+	usersLimit, err := svc.Find(ctx, qLimit)
+	require.NoError(t, err)
+	require.Len(t, usersLimit, 2)
+	assert.Equal(t, "Alice", usersLimit[0].UserName)
+	assert.Equal(t, "Bob", usersLimit[1].UserName)
+	
+	// Limit 2 Offset 2
+	qOffset := query.New().Limit(2).Offset(2).Order(model.UserProps.ID)
+	usersOffset, err := svc.Find(ctx, qOffset)
+	require.NoError(t, err)
+	require.Len(t, usersOffset, 2)
+	assert.Equal(t, "Charlie", usersOffset[0].UserName)
+	assert.Equal(t, "David", usersOffset[1].UserName)
+
+	// Page edge cases
+	qPage0 := query.New().Page(0, 0) // Should default to 1, 10
+	usersPage0, err := svc.Find(ctx, qPage0)
+	require.NoError(t, err)
+	require.Len(t, usersPage0, 5) // Alice, Bob, Charlie, David, admin
+}
+
+// 23. 测试查询功能 - Scope
+func TestQuery_Scope(t *testing.T) {
+	ctx, svc := setupTest(t)
+	
+	// 定义一个 Scope
+	activeScope := func(db *gorm.DB) *gorm.DB {
+		return db.Where("status = ?", 1)
+	}
+	
+	qScope := query.New().Scope(activeScope)
+	usersScope, err := svc.Find(ctx, qScope)
+	require.NoError(t, err)
+	
+	// All seeded users have status 1
+	require.Len(t, usersScope, 5)
+}
+
+// 24. 测试查询功能 - Unscoped
+func TestQuery_Unscoped(t *testing.T) {
+	ctx, svc := setupTest(t)
+	
+	// 删除 Alice
+	alice, _ := svc.First(ctx, query.New().Where(model.UserProps.UserName.Eq("Alice")))
+	svc.Delete(ctx, query.New().Where(model.UserProps.ID.Eq(alice.ID)))
+	
+	// Normal find - Alice missing
+	users, _ := svc.Find(ctx, query.New())
+	require.Len(t, users, 4)
+	
+	// Unscoped find - Alice present
+	usersUnscoped, err := svc.Find(ctx, query.New().Unscoped())
+	require.NoError(t, err)
+	require.Len(t, usersUnscoped, 5)
+}
+
+// 25. 测试 Order (String vs Column)
+func TestQuery_Order_Variants(t *testing.T) {
+	ctx, svc := setupTest(t)
+	
+	// String "id DESC"
+	qStr := query.New().Order("id DESC")
+	usersStr, _ := svc.Find(ctx, qStr)
+	assert.Equal(t, "admin", usersStr[0].UserName) // ID 5
+	
+	// Column Asc
+	qColAsc := query.New().Order(model.UserProps.ID)
+	usersColAsc, _ := svc.Find(ctx, qColAsc)
+	assert.Equal(t, "Alice", usersColAsc[0].UserName) // ID 1
+	
+	// Column Desc
+	qColDesc := query.New().Order(model.UserProps.ID, true)
+	usersColDesc, _ := svc.Find(ctx, qColDesc)
+	assert.Equal(t, "admin", usersColDesc[0].UserName) // ID 5
+}

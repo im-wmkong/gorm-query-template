@@ -19,8 +19,8 @@ type Repository[T any] interface {
 	Transaction(ctx context.Context, fn func(ctx context.Context) error) error
 	Create(ctx context.Context, entity *T) error
 	Save(ctx context.Context, entity *T) error
-	Update(ctx context.Context, column string, value interface{}) error
-	Updates(ctx context.Context, values interface{}) error
+	Update(ctx context.Context, q *query.Builder, column string, value interface{}) error
+	Updates(ctx context.Context, q *query.Builder, values interface{}) error
 	Delete(ctx context.Context, q *query.Builder) error
 	Find(ctx context.Context, q *query.Builder) ([]*T, error)
 	First(ctx context.Context, q *query.Builder) (*T, error)
@@ -64,14 +64,22 @@ func (r *BaseRepository[T]) Save(ctx context.Context, entity *T) error {
 	return r.DB(ctx).Save(entity).Error
 }
 
-func (r *BaseRepository[T]) Update(ctx context.Context, column string, value interface{}) error {
+func (r *BaseRepository[T]) Update(ctx context.Context, qb *query.Builder, column string, value interface{}) error {
 	var entity T
-	return r.DB(ctx).Model(entity).Update(column, value).Error
+	db := r.DB(ctx).Model(&entity)
+	if qb != nil {
+		db = qb.Apply(db)
+	}
+	return db.Update(column, value).Error
 }
 
-func (r *BaseRepository[T]) Updates(ctx context.Context, values interface{}) error {
+func (r *BaseRepository[T]) Updates(ctx context.Context, qb *query.Builder, values interface{}) error {
 	var entity T
-	return r.DB(ctx).Model(entity).Updates(values).Error
+	db := r.DB(ctx).Model(&entity)
+	if qb != nil {
+		db = qb.Apply(db)
+	}
+	return db.Updates(values).Error
 }
 
 func (r *BaseRepository[T]) Delete(ctx context.Context, qb *query.Builder) error {

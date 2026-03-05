@@ -2,6 +2,7 @@ package query
 
 import (
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Condition 定义一个修改 *gorm.DB 对象的函数
@@ -63,12 +64,21 @@ func (b *Builder) Where(conds ...Condition) *Builder {
 // Or 添加 OR 条件
 func (b *Builder) Or(conds ...Condition) *Builder {
 	b.conditions = append(b.conditions, func(db *gorm.DB) *gorm.DB {
-		return db.Or(func(tx *gorm.DB) *gorm.DB {
-			for _, c := range conds {
-				tx = c(tx)
+		// Use DryRun to extract conditions to avoid "unsupported type func" error with db.Or(func)
+		tmpDB := db.Session(&gorm.Session{DryRun: true, NewDB: true})
+		for _, c := range conds {
+			tmpDB = c(tmpDB)
+		}
+
+		if whereClause, ok := tmpDB.Statement.Clauses["WHERE"]; ok {
+			if where, ok := whereClause.Expression.(clause.Where); ok {
+				// Combine all expressions with AND (default behavior of Where)
+				if len(where.Exprs) > 0 {
+					return db.Or(clause.And(where.Exprs...))
+				}
 			}
-			return tx
-		})
+		}
+		return db
 	})
 	return b
 }
