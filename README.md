@@ -10,13 +10,13 @@
   借助 `base.Repository[T]`，你的业务 Repo 默认集成 Create, Delete, Update, First, Find, Count 等全套标准操作。告别机械化的样板代码，让 Repository 真正回归“数据访问”的本质。
 
 * **🛠️ Service 层掌控查询 (链式调用)**
-  释放 Service 层的自由度。通过 `pkg/query` 提供的查询构建器，直接在 Service 层以流畅的链式 API 组装复杂查询条件，无需再为每一种查询组合在 Repo 层新增方法。完全摒弃反射，性能零损耗。
+  释放 Service 层的自由度。通过 `pkg/query` 提供的查询构建器，直接在 Service 层以流畅的链式 API 组装复杂查询条件，无需再为每一种查询组合在 Repo 层新增方法。
 
 * **🚫 零硬编码 (类型安全的字段映射)**
   告别 `Where("user_name = ?", name)` 这种容易拼写错误的魔法字符串。搭配内置的 `cmd/gen-props` 生成器，自动提取 Model 字段并生成强类型常量（如 `UserProps.UserName.Eq()`），在编译期即可拦截拼写错误。
 
 * **📦 开箱即用**
-  提供标准的项目分层结构（Router -> Handler -> Service -> Repository -> Model），支持无缝接入现有项目。
+  提供标准的项目分层结构（Service -> Repository -> Model），支持无缝接入现有项目。
 
 ## 📂 目录结构
 
