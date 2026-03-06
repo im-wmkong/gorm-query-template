@@ -15,6 +15,8 @@ type Connector interface {
 	DB(ctx context.Context) *gorm.DB
 }
 
+var _ Connector = (*Client)(nil)
+
 type Client struct {
 	db *gorm.DB
 }

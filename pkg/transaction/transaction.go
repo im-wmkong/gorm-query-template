@@ -13,6 +13,8 @@ type Transactioner interface {
 	DB(ctx context.Context) *gorm.DB
 }
 
+var _ Transactioner = (*Manager)(nil)
+
 type Manager struct {
 	connector db.Connector
 }
