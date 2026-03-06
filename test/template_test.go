@@ -11,7 +11,9 @@ import (
 	"gorm-query-template/internal/model"
 	"gorm-query-template/internal/repository"
 	"gorm-query-template/internal/service"
+	"gorm-query-template/pkg/db"
 	"gorm-query-template/pkg/query"
+	"gorm-query-template/pkg/transaction"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,18 +38,20 @@ func setupTest(t *testing.T) (context.Context, service.UserService) {
 			Colorful:                  false,        // Disable color
 		},
 	)
-	db, err := gorm.Open(sqlite.Open(dbName), &gorm.Config{
+	gormDB, err := gorm.Open(sqlite.Open(dbName), &gorm.Config{
 		Logger: newLogger, // 减少日志噪音
 	})
 	require.NoError(t, err, "failed to connect database")
 
 	// Migrate
-	err = db.AutoMigrate(&model.User{})
+	err = gormDB.AutoMigrate(&model.User{})
 	require.NoError(t, err)
 
 	// Initialize components
-	repo := repository.NewUserRepository(db)
-	svc := service.NewUserService(repo)
+	connector := db.NewClient(gormDB)
+	tm := transaction.NewManager(connector)
+	repo := repository.NewUserRepository(connector)
+	svc := service.NewUserService(repo, tm)
 
 	ctx := context.Background()
 
@@ -84,15 +88,17 @@ func seedUsers(t *testing.T, ctx context.Context, svc service.UserService) {
 // 1. 创建用户测试 (独立测试，不使用 setupTest 的默认数据，而是手动验证创建过程)
 func TestCreateUsers(t *testing.T) {
 	// 设置新的 DB
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{
+	gormDB, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Error),
 	})
 	require.NoError(t, err)
-	err = db.AutoMigrate(&model.User{})
+	err = gormDB.AutoMigrate(&model.User{})
 	require.NoError(t, err)
 
-	repo := repository.NewUserRepository(db)
-	svc := service.NewUserService(repo)
+	connector := db.NewClient(gormDB)
+	tm := transaction.NewManager(connector)
+	repo := repository.NewUserRepository(connector)
+	svc := service.NewUserService(repo, tm)
 	ctx := context.Background()
 
 	users := []struct {

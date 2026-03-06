@@ -3,20 +3,16 @@ package base
 import (
 	"context"
 
+	"gorm-query-template/pkg/db"
 	"gorm-query-template/pkg/query"
 
 	"gorm.io/gorm"
 )
 
-type txKeyType struct{}
-
-var txKey = txKeyType{}
-
 // Repository 定义了通用的仓储接口
 // T 是 Model 类型
 type Repository[T any] interface {
 	DB(ctx context.Context) *gorm.DB
-	Transaction(ctx context.Context, fn func(ctx context.Context) error) error
 	Create(ctx context.Context, entity *T) error
 	Save(ctx context.Context, entity *T) error
 	Update(ctx context.Context, qb *query.Builder, column string, value interface{}) error
@@ -29,31 +25,25 @@ type Repository[T any] interface {
 
 var _ Repository[any] = (*BaseRepository[any])(nil)
 
-// BaseRepository 实现了通用的 CRUD 操作
 type BaseRepository[T any] struct {
-	db *gorm.DB
+	connector db.Connector
 }
 
-// NewRepository 创建一个新的 BaseRepository
-func NewRepository[T any](db *gorm.DB) *BaseRepository[T] {
-	return &BaseRepository[T]{db: db}
+func NewRepository[T any](connector db.Connector) *BaseRepository[T] {
+	return &BaseRepository[T]{connector: connector}
 }
 
 func (r *BaseRepository[T]) DB(ctx context.Context) *gorm.DB {
-	v := ctx.Value(txKey)
-	if v != nil {
-		if tx, ok := v.(*gorm.DB); ok {
-			return tx
-		}
-	}
-	return r.db.WithContext(ctx)
+	return r.connector.DB(ctx)
 }
 
-func (r *BaseRepository[T]) Transaction(ctx context.Context, fn func(ctx context.Context) error) error {
-	return r.DB(ctx).Transaction(func(tx *gorm.DB) error {
-		ctx = context.WithValue(ctx, txKey, tx)
-		return fn(ctx)
-	})
+func (r *BaseRepository[T]) buildQuery(ctx context.Context, qb *query.Builder) *gorm.DB {
+	var entity T
+	db := r.DB(ctx).Model(&entity)
+	if qb != nil {
+		db = qb.Apply(db)
+	}
+	return db
 }
 
 func (r *BaseRepository[T]) Create(ctx context.Context, entity *T) error {
@@ -65,49 +55,27 @@ func (r *BaseRepository[T]) Save(ctx context.Context, entity *T) error {
 }
 
 func (r *BaseRepository[T]) Update(ctx context.Context, qb *query.Builder, column string, value interface{}) error {
-	var entity T
-	db := r.DB(ctx).Model(&entity)
-	if qb != nil {
-		db = qb.Apply(db)
-	}
-	return db.Update(column, value).Error
+	return r.buildQuery(ctx, qb).Update(column, value).Error
 }
 
 func (r *BaseRepository[T]) Updates(ctx context.Context, qb *query.Builder, values interface{}) error {
-	var entity T
-	db := r.DB(ctx).Model(&entity)
-	if qb != nil {
-		db = qb.Apply(db)
-	}
-	return db.Updates(values).Error
+	return r.buildQuery(ctx, qb).Updates(values).Error
 }
 
 func (r *BaseRepository[T]) Delete(ctx context.Context, qb *query.Builder) error {
 	var entity T
-	db := r.DB(ctx)
-	if qb != nil {
-		db = qb.Apply(db)
-	}
-	return db.Delete(&entity).Error
+	return r.buildQuery(ctx, qb).Delete(&entity).Error
 }
 
 func (r *BaseRepository[T]) Find(ctx context.Context, qb *query.Builder) ([]*T, error) {
 	var entities []*T
-	db := r.DB(ctx)
-	if qb != nil {
-		db = qb.Apply(db)
-	}
-	err := db.Find(&entities).Error
+	err := r.buildQuery(ctx, qb).Find(&entities).Error
 	return entities, err
 }
 
 func (r *BaseRepository[T]) First(ctx context.Context, qb *query.Builder) (*T, error) {
 	var entity T
-	db := r.DB(ctx)
-	if qb != nil {
-		db = qb.Apply(db)
-	}
-	err := db.First(&entity).Error
+	err := r.buildQuery(ctx, qb).First(&entity).Error
 	if err != nil {
 		return nil, err
 	}
@@ -116,11 +84,6 @@ func (r *BaseRepository[T]) First(ctx context.Context, qb *query.Builder) (*T, e
 
 func (r *BaseRepository[T]) Count(ctx context.Context, qb *query.Builder) (int64, error) {
 	var count int64
-	var entity T
-	db := r.DB(ctx).Model(&entity)
-	if qb != nil {
-		db = qb.Apply(db)
-	}
-	err := db.Count(&count).Error
+	err := r.buildQuery(ctx, qb).Count(&count).Error
 	return count, err
 }

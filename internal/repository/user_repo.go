@@ -3,8 +3,7 @@ package repository
 import (
 	"gorm-query-template/internal/model"
 	"gorm-query-template/pkg/base"
-
-	"gorm.io/gorm"
+	"gorm-query-template/pkg/db"
 )
 
 // UserRepository 接口继承了通用的 Repository 接口
@@ -19,8 +18,8 @@ type userRepository struct {
 }
 
 // NewUserRepository 创建一个新的 user repository
-func NewUserRepository(db *gorm.DB) UserRepository {
+func NewUserRepository(connector db.Connector) UserRepository {
 	return &userRepository{
-		BaseRepository: base.NewRepository[model.User](db),
+		BaseRepository: base.NewRepository[model.User](connector),
 	}
 }

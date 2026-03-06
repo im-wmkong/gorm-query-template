@@ -8,6 +8,7 @@ import (
 	"gorm-query-template/internal/repository"
 	"gorm-query-template/pkg/base"
 	"gorm-query-template/pkg/query"
+	"gorm-query-template/pkg/transaction"
 )
 
 var ErrUserAlreadyExists = errors.New("user already exists")
@@ -23,19 +24,21 @@ type UserService interface {
 type userService struct {
 	*base.BaseService[model.User]
 	repo repository.UserRepository // 如果需要自定义方法，保留特定的 repo 引用
+	tm   transaction.Transactioner
 }
 
 // NewUserService 创建一个新的 user service
-func NewUserService(repo repository.UserRepository) UserService {
+func NewUserService(repo repository.UserRepository, tm transaction.Transactioner) UserService {
 	return &userService{
 		BaseService: base.NewService[model.User](repo),
 		repo:        repo,
+		tm:          tm,
 	}
 }
 
 // CreateUser 创建一个新用户并进行验证
 func (s *userService) CreateUser(ctx context.Context, user *model.User) error {
-	return s.repo.Transaction(ctx, func(ctx context.Context) error {
+	return s.tm.Transaction(ctx, func(ctx context.Context) error {
 		// 检查用户邮箱是否已存在
 		q := query.New().Where(model.UserProps.Email.Eq(user.Email))
 		count, err := s.Count(ctx, q)
