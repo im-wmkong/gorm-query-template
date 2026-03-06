@@ -34,7 +34,7 @@ func (c *Client) DB(ctx context.Context) *gorm.DB {
 	v := ctx.Value(txKey)
 	if v != nil {
 		if tx, ok := v.(*gorm.DB); ok {
-			return tx
+			return tx.WithContext(ctx)
 		}
 	}
 	return c.db.WithContext(ctx)
