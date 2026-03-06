@@ -64,7 +64,7 @@ func (b *Builder) Where(conds ...Condition) *Builder {
 // Or 添加 OR 条件
 func (b *Builder) Or(conds ...Condition) *Builder {
 	b.conditions = append(b.conditions, func(db *gorm.DB) *gorm.DB {
-		// Use DryRun to extract conditions to avoid "unsupported type func" error with db.Or(func)
+		// 使用 DryRun 提取条件以避免 db.Or(func) 出现 "unsupported type func" 错误
 		tmpDB := db.Session(&gorm.Session{DryRun: true, NewDB: true})
 		for _, c := range conds {
 			tmpDB = c(tmpDB)
@@ -72,7 +72,7 @@ func (b *Builder) Or(conds ...Condition) *Builder {
 
 		if whereClause, ok := tmpDB.Statement.Clauses["WHERE"]; ok {
 			if where, ok := whereClause.Expression.(clause.Where); ok {
-				// Combine all expressions with AND (default behavior of Where)
+				// 将所有表达式用 AND 组合（Where 的默认行为）
 				if len(where.Exprs) > 0 {
 					return db.Or(clause.And(where.Exprs...))
 				}

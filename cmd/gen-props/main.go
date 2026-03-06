@@ -1,208 +1,136 @@
 package main
 
 import (
-	"bytes"
 	"flag"
-	"fmt"
-	"go/ast"
-	"go/format"
-	"go/parser"
-	"go/token"
 	"log"
 	"os"
-	"reflect"
+	"path/filepath"
 	"strings"
-	"unicode"
+
+	"golang.org/x/tools/go/packages"
+	"gorm.io/gorm/schema"
 )
 
 var (
-	typeNames = flag.String("type", "", "comma-separated list of type names; must be set")
-	output    = flag.String("output", "", "output file name; default srcdir/<type>_gen.go")
+	typeNames  = flag.String("type", "", "逗号分隔的类型名称列表；必须设置")
+	output     = flag.String("output", "", "输出文件名；默认 srcdir/<type>_gen.go")
+	moduleName = flag.String("module", "", "在导入中使用的模块名称；如果未设置，尝试从 go.mod 检测")
 )
 
+var namingStrategy = schema.NamingStrategy{
+	SingularTable: true,
+}
+
 func main() {
+	// 1. 解析参数
 	flag.Parse()
 	if len(*typeNames) == 0 {
 		flag.Usage()
 		os.Exit(2)
 	}
 
-	types := strings.Split(*typeNames, ",")
+	goFile, outName := parseEnvAndArgs()
+
+	// 2. 加载包
+	pkgs := loadPackage(goFile)
+
+	// 3. 查找目标包
+	pkg := findTargetPackage(pkgs)
+
+	// 4. 确定模块路径
+	mod := determineModulePath(pkg)
+
+	// 5. 初始化生成器
 	g := Generator{
-		pkgName: "",
-		types:   types,
-		data:    make(map[string][]FieldInfo),
+		pkgName:    pkg.Name,
+		data:       make(map[string][]FieldInfo),
+		outputPath: outName,
+		modulePath: mod,
 	}
 
-	// 解析当前目录下的文件或 GOFILE 环境变量指定的文件
-	goFile := os.Getenv("GOFILE")
-	if goFile == "" {
-		log.Fatal("GOFILE environment variable must be set (run via go generate)")
-	}
+	// 6. 处理类型
+	g.processTypes(pkg)
 
-	g.parseFile(goFile)
+	// 7. 生成代码
 	g.generate()
 }
 
-type FieldInfo struct {
-	FieldName  string
-	ColumnName string
-}
-
-type Generator struct {
-	pkgName string
-	types   []string
-	data    map[string][]FieldInfo // TypeName -> Fields
-}
-
-func (g *Generator) parseFile(filename string) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, filename, nil, 0)
-	if err != nil {
-		log.Fatalf("parsing file %s: %s", filename, err)
+func parseEnvAndArgs() (string, string) {
+	// 解析当前目录下的文件或 GOFILE 环境变量指定的文件
+	goFile := os.Getenv("GOFILE")
+	if goFile == "" {
+		log.Fatal("GOFILE 环境变量必须设置 (通过 go generate 运行)")
 	}
-	g.pkgName = f.Name.Name
 
-	ast.Inspect(f, func(n ast.Node) bool {
-		ts, ok := n.(*ast.TypeSpec)
-		if !ok {
-			return true
-		}
+	// 确定输出文件名
+	outName := *output
+	if outName == "" {
+		baseName := strings.TrimSuffix(goFile, ".go")
+		outName = baseName + "_gen.go"
+	}
+	return goFile, outName
+}
 
-		st, ok := ts.Type.(*ast.StructType)
-		if !ok {
-			return true
-		}
+func loadPackage(goFile string) []*packages.Package {
+	absGoFile, err := filepath.Abs(goFile)
+	if err != nil {
+		log.Fatalf("无法获取 GOFILE 的绝对路径: %v", err)
+	}
 
-		// 检查此类型是否在我们的列表中
-		typeName := ts.Name.Name
-		found := false
-		for _, t := range g.types {
-			if t == typeName {
-				found = true
+	cfg := &packages.Config{
+		Mode: packages.NeedName | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedSyntax | packages.NeedImports | packages.NeedModule,
+		Dir:  filepath.Dir(absGoFile), // 设置 Dir 为 GOFILE 所在目录
+	}
+	// 使用 file=pattern 语法来加载包含特定文件的包
+	pkgs, err := packages.Load(cfg, "file="+absGoFile)
+	if err != nil {
+		log.Fatalf("加载包失败: %v", err)
+	}
+	if packages.PrintErrors(pkgs) > 0 {
+		os.Exit(1)
+	}
+	return pkgs
+}
+
+func findTargetPackage(pkgs []*packages.Package) *packages.Package {
+	typesList := strings.Split(*typeNames, ",")
+	var pkg *packages.Package
+	var foundPkg bool
+
+	for _, p := range pkgs {
+		for _, typeName := range typesList {
+			if obj := p.Types.Scope().Lookup(typeName); obj != nil {
+				pkg = p
+				foundPkg = true
 				break
 			}
 		}
-		if !found {
-			return true
+		if foundPkg {
+			break
 		}
-
-		var fields []FieldInfo
-		for _, field := range st.Fields.List {
-			// 处理嵌入字段 (匿名字段)
-			// 特别处理 "base.Model" 或 "Model" 以注入默认字段
-			if len(field.Names) == 0 {
-				ident, ok := field.Type.(*ast.SelectorExpr)
-				if ok {
-					// 检查 base.Model
-					if xIdent, ok := ident.X.(*ast.Ident); ok && xIdent.Name == "base" && ident.Sel.Name == "Model" {
-						fields = append(fields, g.getBaseModelFields()...)
-						continue
-					}
-				}
-				// 检查本地 Model 嵌入 (如果有)
-				if ident, ok := field.Type.(*ast.Ident); ok && ident.Name == "Model" {
-					// 假设它等同于 base.Model 或类似
-					fields = append(fields, g.getBaseModelFields()...)
-					continue
-				}
-				continue
-			}
-
-			// 普通字段
-			for _, name := range field.Names {
-				fieldName := name.Name
-				columnName := toSnakeCase(fieldName)
-
-				if field.Tag != nil {
-					tag := reflect.StructTag(strings.Trim(field.Tag.Value, "`"))
-					if val, ok := tag.Lookup("gorm"); ok {
-						parts := strings.Split(val, ";")
-						for _, part := range parts {
-							kv := strings.Split(part, ":")
-							if len(kv) == 2 && strings.TrimSpace(kv[0]) == "column" {
-								columnName = strings.TrimSpace(kv[1])
-								break
-							}
-						}
-					}
-				}
-				fields = append(fields, FieldInfo{
-					FieldName:  fieldName,
-					ColumnName: columnName,
-				})
-			}
-		}
-		g.data[typeName] = fields
-		return false
-	})
-}
-
-func (g *Generator) getBaseModelFields() []FieldInfo {
-	return []FieldInfo{
-		{FieldName: "ID", ColumnName: "id"},
-		{FieldName: "CreatedAt", ColumnName: "created_at"},
-		{FieldName: "UpdatedAt", ColumnName: "updated_at"},
-		{FieldName: "DeletedAt", ColumnName: "deleted_at"},
-	}
-}
-
-func (g *Generator) generate() {
-	if len(g.data) == 0 {
-		return
 	}
 
-	outName := *output
-	if outName == "" {
-		// 默认为第一个类型名称 + "_gen.go"
-		// 但通常我们一次处理一个文件，所以也许 filename_gen.go 更好？
-		// 但是 GOFILE 给了我们输入文件名。
-		baseName := strings.TrimSuffix(os.Getenv("GOFILE"), ".go")
-		outName = baseName + "_gen.go"
-	}
-
-	var buf bytes.Buffer
-	buf.WriteString("// Code generated by gen-props. DO NOT EDIT.\n")
-	buf.WriteString(fmt.Sprintf("package %s\n\n", g.pkgName))
-	buf.WriteString("import \"gorm-query-template/pkg/query\"\n\n")
-
-	for typeName, fields := range g.data {
-		buf.WriteString(fmt.Sprintf("// %sProps defines the fields for %s\n", typeName, typeName))
-		buf.WriteString(fmt.Sprintf("var %sProps = struct {\n", typeName))
-		for _, f := range fields {
-			buf.WriteString(fmt.Sprintf("\t%s query.Column\n", f.FieldName))
-		}
-		buf.WriteString("}{\n")
-		for _, f := range fields {
-			buf.WriteString(fmt.Sprintf("\t%s: \"%s\",\n", f.FieldName, f.ColumnName))
-		}
-		buf.WriteString("}\n\n")
-	}
-
-	src, err := format.Source(buf.Bytes())
-	if err != nil {
-		log.Printf("warning: internal error: invalid Go generated: %s", err)
-		src = buf.Bytes()
-	}
-
-	err = os.WriteFile(outName, src, 0644)
-	if err != nil {
-		log.Fatalf("writing output: %s", err)
-	}
-	log.Printf("generated %s", outName)
-}
-
-func toSnakeCase(s string) string {
-	var builder strings.Builder
-	for i, r := range s {
-		if unicode.IsUpper(r) {
-			if i > 0 {
-				builder.WriteRune('_')
-			}
-			builder.WriteRune(unicode.ToLower(r))
+	if !foundPkg {
+		// 如果没找到包含目标类型的包，默认使用第一个包，或者报错
+		if len(pkgs) > 0 {
+			pkg = pkgs[0]
 		} else {
-			builder.WriteRune(r)
+			log.Fatal("未找到任何包")
 		}
 	}
-	return builder.String()
+	return pkg
+}
+
+func determineModulePath(pkg *packages.Package) string {
+	mod := *moduleName
+	if mod == "" {
+		if pkg != nil && pkg.Module != nil {
+			mod = pkg.Module.Path
+		} else {
+			// 如果无法从 packages 获取模块信息，尝试降级处理或报错
+			log.Printf("警告: 无法检测模块路径，使用默认 'gorm-query-template'")
+			mod = "gorm-query-template"
+		}
+	}
+	return mod
 }
