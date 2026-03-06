@@ -10,12 +10,17 @@ type txKeyType struct{}
 
 var txKey = txKeyType{}
 
-// Connector 定义了获取数据库连接的接口
 type Connector interface {
 	DB(ctx context.Context) *gorm.DB
 }
 
+type TransactionManager interface {
+	Transaction(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
 var _ Connector = (*Client)(nil)
+
+var _ TransactionManager = (*Client)(nil)
 
 type Client struct {
 	db *gorm.DB
@@ -35,7 +40,9 @@ func (c *Client) DB(ctx context.Context) *gorm.DB {
 	return c.db.WithContext(ctx)
 }
 
-// WithTx 将事务 DB 注入 context
-func WithTx(ctx context.Context, tx *gorm.DB) context.Context {
-	return context.WithValue(ctx, txKey, tx)
+func (c *Client) Transaction(ctx context.Context, fn func(ctx context.Context) error) error {
+	return c.DB(ctx).Transaction(func(tx *gorm.DB) error {
+		txCtx := context.WithValue(ctx, txKey, tx)
+		return fn(txCtx)
+	})
 }

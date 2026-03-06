@@ -7,8 +7,8 @@ import (
 	"gorm-query-template/internal/model"
 	"gorm-query-template/internal/repository"
 	"gorm-query-template/pkg/base"
+	"gorm-query-template/pkg/db"
 	"gorm-query-template/pkg/query"
-	"gorm-query-template/pkg/transaction"
 )
 
 var ErrUserAlreadyExists = errors.New("user already exists")
@@ -24,11 +24,11 @@ type UserService interface {
 type userService struct {
 	*base.BaseService
 	repo repository.UserRepository // 如果需要自定义方法，保留特定的 repo 引用
-	tm   transaction.Transactioner
+	tm   db.TransactionManager
 }
 
 // NewUserService 创建一个新的 user service
-func NewUserService(repo repository.UserRepository, tm transaction.Transactioner) UserService {
+func NewUserService(repo repository.UserRepository, tm db.TransactionManager) UserService {
 	return &userService{
 		BaseService: base.NewService(),
 		repo:        repo,

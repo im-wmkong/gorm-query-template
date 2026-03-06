@@ -13,7 +13,6 @@ import (
 	"gorm-query-template/internal/service"
 	"gorm-query-template/pkg/db"
 	"gorm-query-template/pkg/query"
-	"gorm-query-template/pkg/transaction"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -48,10 +47,9 @@ func setupTest(t *testing.T) (context.Context, service.UserService, repository.U
 	require.NoError(t, err)
 
 	// Initialize components
-	connector := db.NewClient(gormDB)
-	tm := transaction.NewManager(connector)
-	repo := repository.NewUserRepository(connector)
-	svc := service.NewUserService(repo, tm)
+	client := db.NewClient(gormDB)
+	repo := repository.NewUserRepository(client)
+	svc := service.NewUserService(repo, client)
 
 	ctx := context.Background()
 
